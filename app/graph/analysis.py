@@ -111,6 +111,148 @@ def find_open_chains(
     return chains
 
 
+def anonymized_label(node_id: int, graph: nx.DiGraph) -> str:
+    """Etiqueta privada: 'Empresa de <rubro>' (identidad protegida)."""
+    sector = graph.nodes[node_id].get("sector") or "rubro desconocido"
+    return f"Empresa de {sector}"
+
+
+def my_counterparties(graph: nx.DiGraph, me: int) -> set[int]:
+    """Vecinos directos (deudores y acreedores) de mi empresa."""
+    if me not in graph:
+        return set()
+    return set(graph.predecessors(me)) | set(graph.successors(me))
+
+
+def find_company_chains(graph: nx.DiGraph, me: int) -> list[dict]:
+    """Ciclos y cadenas donde participa la empresa, con privacidad.
+
+    Reglas de privacidad (como el mapa del prototipo):
+    - Mi empresa y mis contrapartes directas ven nombre real.
+    - El resto de empresas aparece como 'Empresa de <rubro>'.
+    - El balance de una arista solo es visible si yo soy parte de ella.
+    """
+    if me not in graph:
+        return []
+
+    counterparties = my_counterparties(graph, me)
+
+    def label(node_id: int) -> str:
+        if node_id == me:
+            return graph.nodes[node_id]["name"]
+        if node_id in counterparties:
+            return graph.nodes[node_id]["name"]
+        return anonymized_label(node_id, graph)
+
+    def edge_detail(u: int, v: int, balance: Decimal, cancelled: Decimal) -> dict:
+        visible = me in (u, v)
+        return {
+            "debtor_id": u,
+            "creditor_id": v,
+            "debtor_label": label(u),
+            "creditor_label": label(v),
+            "debtor_is_me": u == me,
+            "creditor_is_me": v == me,
+            "balance": balance if visible else None,
+            "cancelled": cancelled,
+            "remainder": (balance - cancelled) if visible else None,
+            "obligation_ids": graph.edges[u, v]["obligation_ids"] if visible else [],
+        }
+
+    results = []
+
+    for cycle in find_cycles(graph):
+        if me not in cycle["company_ids"]:
+            continue
+        comp = cycle["potential_compensation"]
+        named = [
+            graph.nodes[n]["name"]
+            for n in cycle["company_ids"]
+            if n == me or n in counterparties
+        ]
+        results.append(
+            {
+                "kind": "cycle",
+                "company_ids": cycle["company_ids"],
+                "labels": [label(n) for n in cycle["company_ids"]],
+                "named_participants": named,
+                "anonymized_count": len(cycle["company_ids"]) - len(named),
+                "length": cycle["length"],
+                "my_position": "member",
+                "cancelled_amount": comp,
+                "receivable_forgone": comp,
+                "potential_compensation": comp,
+                "status": "ready",
+                "edges": [
+                    edge_detail(
+                        e["debtor_id"], e["creditor_id"], e["balance"], comp
+                    )
+                    for e in cycle["edges"]
+                ],
+            }
+        )
+
+    for chain in find_open_chains(graph):
+        if me not in chain["company_ids"]:
+            continue
+        path = chain["company_ids"]
+        comp = chain["potential_compensation"]
+        named = [
+            graph.nodes[n]["name"]
+            for n in path
+            if n == me or n in counterparties
+        ]
+        # En una cadena abierta los extremos no son neutros:
+        # la fuente paga menos; el sumidero cobra menos; los del medio
+        # quedan igual (pagan menos y cobran menos).
+        if me == path[0]:
+            position, cancelled, forgone = "source", comp, Decimal("0.00")
+        elif me == path[-1]:
+            position, cancelled, forgone = "sink", Decimal("0.00"), comp
+        else:
+            position, cancelled, forgone = "middle", comp, comp
+        results.append(
+            {
+                "kind": "chain",
+                "company_ids": path,
+                "labels": [label(n) for n in path],
+                "named_participants": named,
+                "anonymized_count": len(path) - len(named),
+                "length": len(path),
+                "my_position": position,
+                "cancelled_amount": cancelled,
+                "receivable_forgone": forgone,
+                "potential_compensation": comp,
+                "status": "compensable",
+                "edges": [
+                    edge_detail(
+                        e["debtor_id"], e["creditor_id"], e["balance"], comp
+                    )
+                    for e in chain["edges"]
+                ],
+            }
+        )
+
+    results.sort(
+        key=lambda c: (c["kind"] != "cycle", -c["potential_compensation"])
+    )
+    return results
+
+
+def compensable_obligation_ids(graph: nx.DiGraph) -> set[int]:
+    """Ids de obligaciones que participan en algun ciclo o cadena."""
+    ids: set[int] = set()
+    for cycle in find_cycles(graph):
+        for e in cycle["edges"]:
+            ids.update(e["obligation_ids"])
+    for chain in find_open_chains(graph):
+        for i in range(len(chain["company_ids"]) - 1):
+            u = chain["company_ids"][i]
+            v = chain["company_ids"][i + 1]
+            ids.update(graph.edges[u, v]["obligation_ids"])
+    return ids
+
+
 def estimate_compensable_volume(graph: nx.DiGraph) -> tuple[Decimal, int, int]:
     """Estimacion greedy del volumen compensable en un ciclo mensual.
 

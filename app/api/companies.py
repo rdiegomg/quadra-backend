@@ -7,8 +7,13 @@ from sqlalchemy.orm import Session, joinedload
 from decimal import Decimal
 
 from app.api.deps import get_db, require_admin, require_company_user
-from app.graph.analysis import COMMISSION_RATE
-from app.graph.builder import build_debt_graph
+from app.graph.analysis import (
+    COMMISSION_RATE,
+    anonymized_label,
+    find_company_chains,
+    my_counterparties,
+)
+from app.graph.builder import build_debt_graph, edge_balance
 from app.graph.cycles import find_cycles
 from app.models.company import Company
 from app.models.enums import ObligationStatus
@@ -18,6 +23,10 @@ from app.schemas.company import (
     CompanyResponse,
     CompanySummaryResponse,
     CompensationProposalResponse,
+    MyChainResponse,
+    MyNetworkEdge,
+    MyNetworkNode,
+    MyNetworkResponse,
 )
 from app.schemas.obligation import ObligationResponse
 
@@ -115,6 +124,141 @@ def get_my_proposal(
         est_financial_savings=(amount * SAVINGS_RATE).quantize(Decimal("0.01")),
         currency="BOB",
     )
+
+
+@router.get("/me/chains", response_model=list[MyChainResponse])
+def get_my_chains(
+    current_user: User = Depends(require_company_user),
+    db: Session = Depends(get_db),
+) -> list[MyChainResponse]:
+    """Ciclos y cadenas donde participa la empresa, anonimizados.
+
+    Vista tipo 'Tus cadenas' del prototipo: la empresa ve su propia
+    posicion, el monto que se le cancela y el detalle por eslabon.
+    """
+    graph = build_debt_graph(db)
+    me = current_user.company_id
+    chains = find_company_chains(graph, me)
+
+    # Primer vencimiento: min due_date de las obligaciones del tramo.
+    obligation_ids = {
+        oid
+        for chain in chains
+        for i in range(len(chain["company_ids"]) - 1)
+        for oid in graph.edges[
+            chain["company_ids"][i], chain["company_ids"][i + 1]
+        ]["obligation_ids"]
+    } | {
+        oid
+        for chain in chains
+        if chain["kind"] == "cycle"
+        for oid in graph.edges[
+            chain["company_ids"][-1], chain["company_ids"][0]
+        ]["obligation_ids"]
+    }
+    due_dates: dict[int, date] = {}
+    if obligation_ids:
+        for oid, due in db.execute(
+            select(Obligation.id, Obligation.due_date).where(
+                Obligation.id.in_(obligation_ids)
+            )
+        ):
+            due_dates[oid] = due
+
+    responses = []
+    for chain in chains:
+        ids_in_chain = {
+            oid
+            for i in range(len(chain["company_ids"]) - 1)
+            for oid in graph.edges[
+                chain["company_ids"][i], chain["company_ids"][i + 1]
+            ]["obligation_ids"]
+        }
+        if chain["kind"] == "cycle":
+            ids_in_chain |= set(
+                graph.edges[
+                    chain["company_ids"][-1], chain["company_ids"][0]
+                ]["obligation_ids"]
+            )
+        first_due = min(
+            (due_dates[oid] for oid in ids_in_chain if oid in due_dates),
+            default=None,
+        )
+        responses.append(
+            MyChainResponse(
+                kind=chain["kind"],
+                labels=chain["labels"],
+                named_participants=chain["named_participants"],
+                anonymized_count=chain["anonymized_count"],
+                length=chain["length"],
+                my_position=chain["my_position"],
+                cancelled_amount=chain["cancelled_amount"],
+                receivable_forgone=chain["receivable_forgone"],
+                potential_compensation=chain["potential_compensation"],
+                commission=(
+                    chain["potential_compensation"] * COMMISSION_RATE
+                ).quantize(Decimal("0.01")),
+                status=chain["status"],
+                first_due_date=first_due,
+                edges=chain["edges"],
+                currency="BOB",
+            )
+        )
+    return responses
+
+
+@router.get("/me/network", response_model=MyNetworkResponse)
+def get_my_network(
+    current_user: User = Depends(require_company_user),
+    db: Session = Depends(get_db),
+) -> MyNetworkResponse:
+    """Mapa privado de la empresa: ella y sus contrapartes nombradas,
+    el resto de la red anonimizado ('Identidad protegida')."""
+    graph = build_debt_graph(db)
+    me = current_user.company_id
+    if me not in graph:
+        return MyNetworkResponse(nodes=[], edges=[])
+
+    counterparties = my_counterparties(graph, me)
+
+    # Nodos visibles: yo + contrapartes + empresas que comparten una
+    # cadena/ciclo conmigo (anonimizadas).
+    chain_mates: set[int] = set()
+    for chain in find_company_chains(graph, me):
+        chain_mates.update(chain["company_ids"])
+
+    visible_nodes = {me} | counterparties | chain_mates
+
+    nodes = []
+    for node_id in visible_nodes:
+        data = graph.nodes[node_id]
+        is_cp = node_id in counterparties
+        named = node_id == me or is_cp
+        nodes.append(
+            MyNetworkNode(
+                id=str(node_id),
+                label=data["name"] if named else anonymized_label(node_id, graph),
+                sector=data.get("sector"),
+                is_me=node_id == me,
+                is_counterparty=is_cp,
+                anonymous=not named,
+            )
+        )
+
+    edges = []
+    for i, (u, v, data) in enumerate(graph.edges(data=True)):
+        if u not in visible_nodes or v not in visible_nodes:
+            continue
+        edges.append(
+            MyNetworkEdge(
+                id=f"e{i}",
+                source=str(u),
+                target=str(v),
+                balance=edge_balance(data) if me in (u, v) else None,
+            )
+        )
+
+    return MyNetworkResponse(nodes=nodes, edges=edges)
 
 
 admin_router = APIRouter(prefix="/admin", tags=["admin"])

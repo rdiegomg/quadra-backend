@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel
@@ -38,3 +39,66 @@ class CompensationProposalResponse(BaseModel):
     commission: Decimal
     est_financial_savings: Decimal
     currency: str
+
+
+class MyChainEdgeResponse(BaseModel):
+    """Un eslabon de la cadena visto por la empresa.
+
+    balance/remainder son None cuando la empresa no es parte de esa
+    arista: monto privado, como en el mapa del prototipo.
+    """
+
+    debtor_label: str
+    creditor_label: str
+    debtor_is_me: bool
+    creditor_is_me: bool
+    balance: Decimal | None
+    cancelled: Decimal
+    remainder: Decimal | None
+
+
+class MyChainResponse(BaseModel):
+    """Cadena (cerrada=ciclo, abierta=camino) donde participa la empresa.
+
+    Privacidad: solo se nombran mi empresa y mis contrapartes directas;
+    el resto aparece anonimizado como 'Empresa de <rubro>'.
+    """
+
+    kind: str  # "cycle" | "chain"
+    labels: list[str]
+    named_participants: list[str]
+    anonymized_count: int
+    length: int
+    my_position: str  # "member" | "source" | "middle" | "sink"
+    cancelled_amount: Decimal
+    receivable_forgone: Decimal
+    potential_compensation: Decimal
+    commission: Decimal
+    status: str  # "ready" | "compensable"
+    first_due_date: date | None
+    edges: list[MyChainEdgeResponse]
+    currency: str
+
+
+class MyNetworkNode(BaseModel):
+    id: str
+    label: str
+    sector: str | None
+    is_me: bool
+    is_counterparty: bool
+    anonymous: bool
+
+
+class MyNetworkEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    balance: Decimal | None  # None = "Monto privado"
+
+
+class MyNetworkResponse(BaseModel):
+    """Subgrafo de la empresa: ella y sus contrapartes con nombre real,
+    el resto de la red anonimizado."""
+
+    nodes: list[MyNetworkNode]
+    edges: list[MyNetworkEdge]

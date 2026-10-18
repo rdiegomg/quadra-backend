@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Date, Enum, ForeignKey, Numeric, func
+from sqlalchemy import CheckConstraint, Date, Enum, ForeignKey, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -40,6 +40,7 @@ class Obligation(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     balance: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     currency: Mapped[str] = mapped_column(default="BOB")
+    reference: Mapped[str | None] = mapped_column(String(60))
     interest_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     origin_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)

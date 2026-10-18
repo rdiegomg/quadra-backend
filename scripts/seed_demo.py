@@ -213,6 +213,7 @@ def add_obligation(
         origin_date=origin,
         due_date=computed_due,
         payment_frequency=frequency,
+        reference=str(rng.randint(1000, 9999)) if rng.random() < 0.85 else None,
         status=status,
     )
     db.add(obligation)

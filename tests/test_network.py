@@ -152,6 +152,109 @@ def test_company_proposal_and_simulation(client, network_data) -> None:
     assert sim["estimated_commission"] == "225.00"
 
 
+def test_my_chains_cycle_privacy(client, network_data) -> None:
+    """A ve su ciclo; las aristas donde no es parte ocultan el monto."""
+    r = client.get(
+        "/api/companies/me/chains", headers=auth(network_data["company_token"])
+    )
+    assert r.status_code == 200
+    chains = r.json()
+    assert len(chains) == 1
+    chain = chains[0]
+    assert chain["kind"] == "cycle"
+    assert chain["status"] == "ready"
+    assert chain["cancelled_amount"] == "10000.00"
+    assert chain["receivable_forgone"] == "10000.00"
+    assert chain["commission"] == "150.00"
+    assert len(chain["edges"]) == 3
+    # en A->B->C->A las aristas A->B y C->A son visibles; B->C es privada
+    visible = [e["balance"] for e in chain["edges"] if e["balance"] is not None]
+    assert sorted(visible) == ["10000.00", "30000.00"]
+    assert any(e["balance"] is None for e in chain["edges"])
+
+
+def test_my_chains_positions(client, network_data) -> None:
+    """Posicion en la cadena abierta D->E->F cambia el efecto."""
+    td = client.post(
+        "/api/auth/login", data={"username": "d@d.bo", "password": "secreto123"}
+    ).json()["access_token"]
+    te = client.post(
+        "/api/auth/login", data={"username": "e@d.bo", "password": "secreto123"}
+    ).json()["access_token"]
+
+    d_chains = client.get("/api/companies/me/chains", headers=auth(td)).json()
+    assert len(d_chains) == 1
+    assert d_chains[0]["my_position"] == "source"
+    assert d_chains[0]["cancelled_amount"] == "5000.00"
+    assert d_chains[0]["receivable_forgone"] == "0.00"
+
+    e_chains = client.get("/api/companies/me/chains", headers=auth(te)).json()
+    assert len(e_chains) == 1
+    assert e_chains[0]["my_position"] == "middle"
+    assert e_chains[0]["cancelled_amount"] == "5000.00"
+    assert e_chains[0]["receivable_forgone"] == "5000.00"
+
+
+def test_my_network_privacy(client, network_data) -> None:
+    """D ve a su contraparte E con nombre, pero F aparece anonimizado
+    y la arista E->F con monto privado."""
+    td = client.post(
+        "/api/auth/login", data={"username": "d@d.bo", "password": "secreto123"}
+    ).json()["access_token"]
+    r = client.get("/api/companies/me/network", headers=auth(td))
+    assert r.status_code == 200
+    data = r.json()
+
+    labels = {n["label"] for n in data["nodes"]}
+    assert "Empresa 1005" in labels            # contraparte E, nombrada
+    assert "Empresa 1006" not in labels        # F es anonima
+    assert any(n["anonymous"] for n in data["nodes"])
+
+    visible = [e for e in data["edges"] if e["balance"] is not None]
+    private = [e for e in data["edges"] if e["balance"] is None]
+    assert len(visible) == 1 and visible[0]["balance"] == "5000.00"
+    assert len(private) == 1                    # E->F: monto privado
+
+
+def test_import_csv(client, network_data) -> None:
+    """Carga de planilla CSV: crea validas, omite NITs inexistentes."""
+    csv_data = (
+        "tipo,nit_contraparte,monto,fecha_emision,fecha_vencimiento,nro_factura\n"
+        f"pagar,1005,1500.50,{date.today() - timedelta(days=5)},"
+        f"{date.today() + timedelta(days=40)},9901\n"
+        "cobrar,9999,100,2026-10-01,2026-11-01,777\n"
+        "pagar,1005,-50,2026-10-01,2026-11-01,888\n"
+    )
+    r = client.post(
+        "/api/obligations/import",
+        files={"file": ("planilla.csv", csv_data, "text/csv")},
+        headers=auth(network_data["company_token"]),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["created"] == 1
+    assert len(body["skipped"]) == 2            # NIT inexistente + monto negativo
+
+    payables = client.get(
+        "/api/obligations/payable", headers=auth(network_data["company_token"])
+    ).json()
+    imported = [o for o in payables if o["reference"] == "9901"]
+    assert len(imported) == 1
+    assert imported[0]["amount"] == "1500.50"
+
+
+def test_obligations_in_chain_flag(client, network_data) -> None:
+    """Las obligaciones del ciclo llegan marcadas in_chain."""
+    r = client.get(
+        "/api/obligations/receivable", headers=auth(network_data["company_token"])
+    )
+    assert r.status_code == 200
+    items = r.json()
+    # A solo tiene una acreencia (C->A, la de 30000) y esta en el ciclo
+    assert len(items) == 1
+    assert items[0]["in_chain"] is True
+
+
 def test_network_endpoints_require_admin(client, network_data) -> None:
     company = network_data["company_token"]
     for path in (

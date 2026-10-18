@@ -24,6 +24,7 @@ class ObligationCreate(BaseModel):
     origin_date: date
     due_date: date
     payment_frequency: PaymentFrequency = PaymentFrequency.ONE_TIME
+    reference: str | None = Field(default=None, max_length=60)
 
 
 class CounterpartyInfo(BaseModel):
@@ -43,11 +44,13 @@ class ObligationResponse(BaseModel):
     amount: Decimal
     balance: Decimal
     currency: str
+    reference: str | None
     interest_rate: Decimal | None
     origin_date: date
     due_date: date
     payment_frequency: PaymentFrequency
     status: ObligationStatus
+    in_chain: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -76,3 +79,13 @@ class ObligationEventResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ImportSkippedRow(BaseModel):
+    row: int
+    reason: str
+
+
+class ObligationImportResponse(BaseModel):
+    created: int
+    skipped: list[ImportSkippedRow]
