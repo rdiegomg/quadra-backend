@@ -224,8 +224,13 @@ def get_my_network(
     # Nodos visibles: yo + contrapartes + empresas que comparten una
     # cadena/ciclo conmigo (anonimizadas).
     chain_mates: set[int] = set()
+    cycle_edges: set[tuple[int, int]] = set()
+    chain_edges: set[tuple[int, int]] = set()
     for chain in find_company_chains(graph, me):
         chain_mates.update(chain["company_ids"])
+        bucket = cycle_edges if chain["kind"] == "cycle" else chain_edges
+        for e in chain["edges"]:
+            bucket.add((e["debtor_id"], e["creditor_id"]))
 
     visible_nodes = {me} | counterparties | chain_mates
 
@@ -249,12 +254,19 @@ def get_my_network(
     for i, (u, v, data) in enumerate(graph.edges(data=True)):
         if u not in visible_nodes or v not in visible_nodes:
             continue
+        if (u, v) in cycle_edges:
+            role = "cycle"
+        elif (u, v) in chain_edges:
+            role = "chain"
+        else:
+            role = "other"
         edges.append(
             MyNetworkEdge(
                 id=f"e{i}",
                 source=str(u),
                 target=str(v),
                 balance=edge_balance(data) if me in (u, v) else None,
+                role=role,
             )
         )
 

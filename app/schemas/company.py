@@ -94,6 +94,7 @@ class MyNetworkEdge(BaseModel):
     source: str
     target: str
     balance: Decimal | None  # None = "Monto privado"
+    role: str  # "cycle" | "chain" | "other"
 
 
 class MyNetworkResponse(BaseModel):
