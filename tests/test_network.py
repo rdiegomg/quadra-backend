@@ -103,6 +103,8 @@ def test_open_chains(client, network_data) -> None:
     assert chain["length"] == 3          # D -> E -> F
     assert chain["ends_in_cycle"] is False
     assert chain["total_volume"] == "12000.00"
+    # compensacion sobre cadena: min(5000, 7000)
+    assert chain["potential_compensation"] == "5000.00"
 
 
 def test_statistics(client, network_data) -> None:
@@ -113,6 +115,41 @@ def test_statistics(client, network_data) -> None:
     assert stats["open_connections"] == 5
     assert stats["companies_in_cycles"] == 3
     assert stats["top_creditors"]
+    # volumen compensable = ciclo (10k) + cadena disjunta (5k) = 15k
+    assert stats["compensable_volume"] == "15000.00"
+    # tasa = 15000 / 72000
+    assert float(stats["compensation_rate"]) == pytest.approx(15000 / 72000)
+    assert stats["estimated_commission"] == "225.00"  # 1.5% de 15000
+
+
+def test_company_proposal_and_simulation(client, network_data) -> None:
+    company = network_data["company_token"]
+
+    # la empresa A participa del ciclo: propuesta con cancelado = 10k
+    r = client.get("/api/companies/me/proposal", headers=auth(company))
+    assert r.status_code == 200
+    proposal = r.json()
+    assert proposal["cancelled_amount"] == "10000.00"
+    assert proposal["receivable_forgone"] == "10000.00"
+    assert proposal["cycle_length"] == 3
+    assert proposal["commission"] == "150.00"          # 1.5%
+    assert proposal["est_financial_savings"] == "250.00"  # 2.5%
+
+    # D no esta en ningun ciclo: sin propuesta (null)
+    td = client.post(
+        "/api/auth/login", data={"username": "d@d.bo", "password": "secreto123"}
+    ).json()["access_token"]
+    r = client.get("/api/companies/me/proposal", headers=auth(td))
+    assert r.status_code == 200 and r.json() is None
+
+    # simulacion admin: 1 ciclo + 1 cadena, 15000 cancelados
+    sim = client.get(
+        "/api/admin/network/simulation", headers=auth(network_data["admin"])
+    ).json()
+    assert sim["cycles_used"] == 1
+    assert sim["chains_used"] == 1
+    assert sim["total_cancelled"] == "15000.00"
+    assert sim["estimated_commission"] == "225.00"
 
 
 def test_network_endpoints_require_admin(client, network_data) -> None:
@@ -122,6 +159,7 @@ def test_network_endpoints_require_admin(client, network_data) -> None:
         "/api/admin/network/cycles",
         "/api/admin/network/open-chains",
         "/api/admin/network/statistics",
+        "/api/admin/network/simulation",
     ):
         assert client.get(path, headers=auth(company)).status_code == 403
         assert client.get(path).status_code == 401

@@ -21,3 +21,20 @@ class CompanySummaryResponse(BaseModel):
     net_balance: Decimal
     pending_obligations: int
     overdue_obligations: int
+
+
+class CompensationProposalResponse(BaseModel):
+    """Propuesta individual de compensacion (paso 4 del flujo operativo).
+
+    La empresa ve solo SU resultado: cuanta deuda se le cancela y cuanta
+    acreencia deja de cobrar. En un ciclo ambos montos son iguales
+    (posicion neta preservada). Todo simulado: no modifica obligaciones.
+    """
+
+    cycle_companies: list[str]
+    cycle_length: int
+    cancelled_amount: Decimal
+    receivable_forgone: Decimal
+    commission: Decimal
+    est_financial_savings: Decimal
+    currency: str

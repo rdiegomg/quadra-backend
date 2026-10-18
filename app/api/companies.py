@@ -4,13 +4,25 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
+from decimal import Decimal
+
 from app.api.deps import get_db, require_admin, require_company_user
+from app.graph.analysis import COMMISSION_RATE
+from app.graph.builder import build_debt_graph
+from app.graph.cycles import find_cycles
 from app.models.company import Company
 from app.models.enums import ObligationStatus
 from app.models.obligation import Obligation
 from app.models.user import User
-from app.schemas.company import CompanyResponse, CompanySummaryResponse
+from app.schemas.company import (
+    CompanyResponse,
+    CompanySummaryResponse,
+    CompensationProposalResponse,
+)
 from app.schemas.obligation import ObligationResponse
+
+# Costo financiero evitado ~2.5% (15% anual x ~60 dias de financiamiento).
+SAVINGS_RATE = Decimal("0.025")
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -70,6 +82,38 @@ def get_my_summary(
         net_balance=total_receivable - total_payable,
         pending_obligations=pending,
         overdue_obligations=overdue,
+    )
+
+
+@router.get("/me/proposal", response_model=CompensationProposalResponse | None)
+def get_my_proposal(
+    current_user: User = Depends(require_company_user),
+    db: Session = Depends(get_db),
+) -> CompensationProposalResponse | None:
+    """Mejor propuesta de compensacion disponible para mi empresa.
+
+    Busca el ciclo mas compensable que incluye a la empresa. Devuelve
+    null si no participa en ningun ciclo. Simulado.
+    """
+    graph = build_debt_graph(db)
+    me = current_user.company_id
+    proposal_cycle = None
+    for cycle in find_cycles(graph):
+        if me in cycle["company_ids"]:
+            proposal_cycle = cycle
+            break
+    if proposal_cycle is None:
+        return None
+
+    amount = proposal_cycle["potential_compensation"]
+    return CompensationProposalResponse(
+        cycle_companies=proposal_cycle["companies"],
+        cycle_length=proposal_cycle["length"],
+        cancelled_amount=amount,
+        receivable_forgone=amount,
+        commission=(amount * COMMISSION_RATE).quantize(Decimal("0.01")),
+        est_financial_savings=(amount * SAVINGS_RATE).quantize(Decimal("0.01")),
+        currency="BOB",
     )
 
 

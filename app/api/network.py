@@ -1,8 +1,12 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin
 from app.graph.analysis import (
+    COMMISSION_RATE,
+    estimate_compensable_volume,
     find_open_chains,
     network_statistics,
     nodes_in_cycles,
@@ -16,6 +20,7 @@ from app.schemas.network import (
     CytoscapeElement,
     NetworkGraphResponse,
     NetworkStatisticsResponse,
+    SimulationResponse,
 )
 
 router = APIRouter(
@@ -92,3 +97,26 @@ def get_statistics(
 ) -> dict:
     graph = build_debt_graph(db)
     return network_statistics(graph, db)
+
+
+@router.get("/simulation", response_model=SimulationResponse)
+def simulate_compensation_cycle(
+    current_user: User = Depends(require_admin), db: Session = Depends(get_db)
+) -> SimulationResponse:
+    """Simula un ciclo mensual de compensacion.
+
+    Selecciona ciclos y cadenas disjuntos (greedy) y reporta la deuda que
+    se cancelaria y la comision estimada de QUADRA. No modifica nada.
+    """
+    graph = build_debt_graph(db)
+    volume, n_cycles, n_chains = estimate_compensable_volume(graph)
+    participating = sum(
+        1 for n in graph.nodes if graph.degree(n) > 0
+    )
+    return SimulationResponse(
+        cycles_used=n_cycles,
+        chains_used=n_chains,
+        companies_participating=participating,
+        total_cancelled=volume,
+        estimated_commission=(volume * COMMISSION_RATE).quantize(Decimal("0.01")),
+    )

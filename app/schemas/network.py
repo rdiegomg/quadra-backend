@@ -52,6 +52,7 @@ class ChainResponse(BaseModel):
     companies: list[str]
     length: int
     total_volume: Decimal
+    potential_compensation: Decimal
     ends_in_cycle: bool
     edges: list[ChainEdgeResponse]
 
@@ -73,6 +74,23 @@ class NetworkStatisticsResponse(BaseModel):
     obligations_open: int
     total_open_volume: Decimal
     companies_in_cycles: int
+    compensable_volume: Decimal
+    compensation_rate: Decimal
+    estimated_commission: Decimal
+    cycles_in_estimate: int
+    chains_in_estimate: int
     top_debtors: list[TopCompanyResponse]
     top_creditors: list[TopCompanyResponse]
     companies_by_sector: dict[str, int]
+
+
+class SimulationResponse(BaseModel):
+    """Resultado de un ciclo mensual de compensacion SIMULADO."""
+
+    cycles_used: int
+    chains_used: int
+    companies_participating: int
+    total_cancelled: Decimal
+    estimated_commission: Decimal
+    currency: str = "BOB"
+    note: str = "Simulacion: no modifica obligaciones ni saldos."

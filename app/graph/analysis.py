@@ -13,12 +13,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.graph.builder import edge_balance
+from app.graph.cycles import find_cycles
 from app.models.company import Company
 from app.models.enums import ObligationStatus
 from app.models.obligation import Obligation
 
 MAX_CHAIN_LENGTH = 8
 MAX_CHAINS = 25
+
+# Comision simulada del modelo de negocio: ~1.5% sobre deuda cancelada.
+COMMISSION_RATE = Decimal("0.015")
 
 
 def nodes_in_cycles(graph: nx.DiGraph) -> set[int]:
@@ -68,12 +72,14 @@ def find_open_chains(
             continue
 
         volume = Decimal("0")
+        min_balance: Decimal | None = None
         edges = []
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
             data = graph.edges[u, v]
             bal = edge_balance(data)
             volume += bal
+            min_balance = bal if min_balance is None else min(min_balance, bal)
             edges.append(
                 {
                     "debtor_id": u,
@@ -90,6 +96,10 @@ def find_open_chains(
                 "companies": [graph.nodes[n]["name"] for n in path],
                 "length": len(path),
                 "total_volume": volume,
+                # Compensacion simulada sobre la cadena (path-enabled):
+                # minimo balance de sus aristas preserva la posicion neta
+                # de los nodos intermedios.
+                "potential_compensation": min_balance,
                 "ends_in_cycle": path[-1] in in_cycle,
                 "edges": edges,
             }
@@ -99,6 +109,38 @@ def find_open_chains(
 
     chains.sort(key=lambda c: (c["length"], c["total_volume"]), reverse=True)
     return chains
+
+
+def estimate_compensable_volume(graph: nx.DiGraph) -> tuple[Decimal, int, int]:
+    """Estimacion greedy del volumen compensable en un ciclo mensual.
+
+    Toma ciclos disjuntos por nodos (ordenados por compensacion) y luego
+    cadenas abiertas disjuntas. Es una cota conservadora: el motor real
+    optimizaria sobre el grafo completo. Devuelve (volumen, n_ciclos,
+    n_cadenas).
+    """
+    used: set[int] = set()
+    volume = Decimal("0")
+    n_cycles = 0
+    n_chains = 0
+
+    for cycle in find_cycles(graph):
+        ids = set(cycle["company_ids"])
+        if ids & used:
+            continue
+        used |= ids
+        volume += cycle["potential_compensation"]
+        n_cycles += 1
+
+    for chain in find_open_chains(graph):
+        ids = set(chain["company_ids"])
+        if ids & used:
+            continue
+        used |= ids
+        volume += chain["potential_compensation"]
+        n_chains += 1
+
+    return volume, n_cycles, n_chains
 
 
 def network_statistics(graph: nx.DiGraph, db: Session) -> dict:
@@ -141,6 +183,11 @@ def network_statistics(graph: nx.DiGraph, db: Session) -> dict:
         )
     )
 
+    compensable, n_cycles, n_chains = estimate_compensable_volume(graph)
+    compensation_rate = (
+        (compensable / total_volume) if total_volume > 0 else Decimal("0")
+    )
+
     return {
         "companies_in_network": graph.number_of_nodes(),
         "companies_total": db.scalar(select(func.count(Company.id))),
@@ -149,6 +196,13 @@ def network_statistics(graph: nx.DiGraph, db: Session) -> dict:
         "obligations_open": obligations_open,
         "total_open_volume": total_volume,
         "companies_in_cycles": len(in_cycle),
+        "compensable_volume": compensable,
+        "compensation_rate": compensation_rate,
+        "estimated_commission": (compensable * COMMISSION_RATE).quantize(
+            Decimal("0.01")
+        ),
+        "cycles_in_estimate": n_cycles,
+        "chains_in_estimate": n_chains,
         "top_debtors": top(debt_by_node),
         "top_creditors": top(credit_by_node),
         "companies_by_sector": dict(companies_by_sector),
