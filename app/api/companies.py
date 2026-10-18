@@ -2,7 +2,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db, require_admin, require_company_user
 from app.models.company import Company
@@ -10,6 +10,7 @@ from app.models.enums import ObligationStatus
 from app.models.obligation import Obligation
 from app.models.user import User
 from app.schemas.company import CompanyResponse, CompanySummaryResponse
+from app.schemas.obligation import ObligationResponse
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -80,3 +81,23 @@ def list_companies(
     _: User = Depends(require_admin), db: Session = Depends(get_db)
 ) -> list[Company]:
     return list(db.scalars(select(Company).order_by(Company.name)))
+
+
+@admin_router.get("/obligations", response_model=list[ObligationResponse])
+def list_obligations_admin(
+    status_filter: ObligationStatus | None = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[Obligation]:
+    """Todas las obligaciones de la red. Sin filtro devuelve solo las abiertas."""
+    stmt = (
+        select(Obligation)
+        .options(joinedload(Obligation.debtor), joinedload(Obligation.creditor))
+        .order_by(Obligation.due_date)
+    )
+    stmt = stmt.where(
+        Obligation.status == status_filter
+        if status_filter
+        else Obligation.status.in_(OPEN_STATUSES)
+    )
+    return list(db.scalars(stmt))

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import ObligationStatus, PaymentFrequency
+from app.models.enums import InstallmentStatus, ObligationStatus, PaymentFrequency
 
 
 class ObligationDirection(str, enum.Enum):
@@ -55,6 +55,17 @@ class ObligationResponse(BaseModel):
 
 class ObligationStatusUpdate(BaseModel):
     status: ObligationStatus
+
+
+class PaymentScheduleResponse(BaseModel):
+    id: int
+    installment_number: int
+    due_date: date
+    amount: Decimal
+    status: InstallmentStatus
+    paid_at: datetime | None
+
+    model_config = {"from_attributes": True}
 
 
 class ObligationEventResponse(BaseModel):

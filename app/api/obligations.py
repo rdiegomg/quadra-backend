@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_user, get_db, require_company_user
 from app.models.company import Company
 from app.models.enums import ObligationStatus, UserRole
-from app.models.obligation import Obligation, ObligationEvent
+from app.models.obligation import Obligation, ObligationEvent, PaymentSchedule
 from app.models.user import User
 from app.schemas.obligation import (
     ObligationCreate,
@@ -13,7 +13,9 @@ from app.schemas.obligation import (
     ObligationEventResponse,
     ObligationResponse,
     ObligationStatusUpdate,
+    PaymentScheduleResponse,
 )
+from app.services.schedules import generate_schedule
 
 router = APIRouter(prefix="/obligations", tags=["obligations"])
 
@@ -146,6 +148,7 @@ def create_obligation(
     )
     db.add(obligation)
     db.flush()
+    generate_schedule(db, obligation)
     _record_event(db, obligation, "CREATED", None, obligation.status, current_user)
     db.commit()
     return get_obligation_for_user(db, obligation.id, current_user)
@@ -172,6 +175,23 @@ def list_obligation_events(
             select(ObligationEvent)
             .where(ObligationEvent.obligation_id == obligation_id)
             .order_by(ObligationEvent.created_at)
+        )
+    )
+
+
+@router.get("/{obligation_id}/schedules", response_model=list[PaymentScheduleResponse])
+def list_payment_schedules(
+    obligation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[PaymentSchedule]:
+    """Plan de cuotas (amortizacion simulada) de la obligacion."""
+    get_obligation_for_user(db, obligation_id, current_user)
+    return list(
+        db.scalars(
+            select(PaymentSchedule)
+            .where(PaymentSchedule.obligation_id == obligation_id)
+            .order_by(PaymentSchedule.installment_number)
         )
     )
 

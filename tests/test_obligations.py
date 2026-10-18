@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -150,6 +151,72 @@ def test_admin_endpoints(client, sector, admin_user) -> None:
 
     # empresa no puede usar endpoints admin
     assert client.get("/api/admin/companies", headers=auth(token_a)).status_code == 403
+
+
+def test_payment_schedule_generated_and_private(client, sector) -> None:
+    token_a = register_company(client, sector, "1111", "a@x.bo", "Empresa A")
+    register_company(client, sector, "2222", "b@x.bo", "Empresa B")
+    token_c = register_company(client, sector, "3333", "c@x.bo", "Empresa C")
+
+    origin = date.today()
+    due = origin + timedelta(days=200)
+    ob_id = create_obligation(
+        client,
+        token_a,
+        "2222",
+        amount="9000.00",
+        origin_date=str(origin),
+        due_date=str(due),
+        payment_frequency="MONTHLY",
+    ).json()["id"]
+
+    schedules = client.get(
+        f"/api/obligations/{ob_id}/schedules", headers=auth(token_a)
+    ).json()
+    assert len(schedules) >= 2
+    # la suma de cuotas cubre exactamente el monto y la ultima vence en due_date
+    assert sum(Decimal(s["amount"]) for s in schedules) == Decimal("9000.00")
+    assert schedules[-1]["due_date"] == str(due)
+    assert all(s["status"] == "PENDING" for s in schedules)
+
+    # pago unico genera una sola cuota en la fecha de vencimiento
+    ob2 = create_obligation(client, token_a, "2222", amount="1000.00").json()["id"]
+    s2 = client.get(f"/api/obligations/{ob2}/schedules", headers=auth(token_a)).json()
+    assert len(s2) == 1
+
+    # tercero no puede ver el plan
+    assert (
+        client.get(f"/api/obligations/{ob_id}/schedules", headers=auth(token_c)).status_code
+        == 404
+    )
+
+
+def test_admin_obligations_list(client, sector, admin_user) -> None:
+    token_a = register_company(client, sector, "1111", "a@x.bo", "Empresa A")
+    register_company(client, sector, "2222", "b@x.bo", "Empresa B")
+    ob_id = create_obligation(client, token_a, "2222").json()["id"]
+    create_obligation(client, token_a, "2222")
+
+    admin = admin_token(client)
+    open_list = client.get("/api/admin/obligations", headers=auth(admin)).json()
+    assert len(open_list) == 2  # ambas abiertas
+    assert {o["debtor"]["nit"] for o in open_list} == {"1111"}
+
+    # al pagar una deja de aparecer entre las abiertas por defecto
+    client.patch(
+        f"/api/obligations/{ob_id}/status",
+        json={"status": "PAID"},
+        headers=auth(admin),
+    )
+    open_list = client.get("/api/admin/obligations", headers=auth(admin)).json()
+    assert len(open_list) == 1
+    # filtro explicito por estado
+    paid = client.get(
+        "/api/admin/obligations?status_filter=PAID", headers=auth(admin)
+    ).json()
+    assert len(paid) == 1 and paid[0]["id"] == ob_id
+
+    assert client.get("/api/admin/obligations", headers=auth(token_a)).status_code == 403
 
 
 def test_document_upload_list_download(client, sector, tmp_path) -> None:
