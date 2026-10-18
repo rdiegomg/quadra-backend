@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: quadra-db
+    environment:
+      POSTGRES_USER: quadra
+      POSTGRES_PASSWORD: quadra
+      POSTGRES_DB: quadra
+    ports:
+      - "5432:5432"
+    volumes:
+      - quadra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quadra -d quadra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: quadra-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://quadra:quadra@db:5432/quadra
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+      CORS_ORIGINS: http://localhost:4200
+    ports:
+      - "8000:8000"
+    profiles:
+      - full
+
+volumes:
+  quadra_pgdata:
