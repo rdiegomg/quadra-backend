@@ -10,8 +10,12 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
-    cors_origins: list[str] = ["http://localhost:4200"]
+    cors_origins: str = "http://localhost:4200"
     environment: str = "development"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache
