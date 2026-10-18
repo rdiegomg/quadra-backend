@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, companies, documents, obligations, sectors
+from app.api import auth, companies, documents, network, obligations, sectors
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -19,6 +19,7 @@ app.include_router(companies.router, prefix="/api")
 app.include_router(companies.admin_router, prefix="/api")
 app.include_router(obligations.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(network.router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
