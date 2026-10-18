@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     cors_origins: str = "http://localhost:4200"
     environment: str = "development"
+    upload_dir: str = "uploads"
 
     @property
     def cors_origin_list(self) -> list[str]:

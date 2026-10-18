@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, sectors
+from app.api import auth, companies, documents, obligations, sectors
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -15,6 +15,10 @@ app = FastAPI(
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(sectors.router, prefix="/api")
+app.include_router(companies.router, prefix="/api")
+app.include_router(companies.admin_router, prefix="/api")
+app.include_router(obligations.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,

@@ -34,3 +34,7 @@ class Company(Base):
     network_memberships: Mapped[list["NetworkMember"]] = relationship(
         back_populates="company"
     )
+
+    @property
+    def sector_name(self) -> str | None:
+        return self.sector.name if self.sector else None
