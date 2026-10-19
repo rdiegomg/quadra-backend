@@ -67,7 +67,7 @@ def network_data(client: TestClient, sector: Sector, admin_user) -> dict:
 
     admin = client.post(
         "/api/auth/login",
-        data={"username": "admin@quadra.demo", "password": "admin1234"},
+        data={"username": "admin@quadra.com", "password": "admin1234"},
     ).json()["access_token"]
     return {"admin": admin, "company_token": ta}
 

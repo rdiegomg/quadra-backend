@@ -83,7 +83,7 @@ def test_admin_login_and_role(
 ) -> None:
     r = client.post(
         "/api/auth/login",
-        data={"username": "admin@quadra.demo", "password": "admin1234"},
+        data={"username": "admin@quadra.com", "password": "admin1234"},
     )
     assert r.status_code == 200
     token = r.json()["access_token"]

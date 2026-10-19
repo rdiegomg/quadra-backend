@@ -35,7 +35,7 @@ def auth(token: str) -> dict:
 def admin_token(client: TestClient) -> str:
     r = client.post(
         "/api/auth/login",
-        data={"username": "admin@quadra.demo", "password": "admin1234"},
+        data={"username": "admin@quadra.com", "password": "admin1234"},
     )
     return r.json()["access_token"]
 

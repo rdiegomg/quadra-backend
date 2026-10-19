@@ -21,7 +21,7 @@ SECTORS = [
     ("Alimentos", "Produccion y comercializacion de alimentos"),
 ]
 
-ADMIN_EMAIL = "admin@quadra.demo"
+ADMIN_EMAIL = "admin@quadra.com"
 ADMIN_PASSWORD = "admin1234"  # credencial de demostracion
 
 

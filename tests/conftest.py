@@ -49,7 +49,7 @@ def sector(db: Session) -> Sector:
 @pytest.fixture
 def admin_user(db: Session) -> User:
     u = User(
-        email="admin@quadra.demo",
+        email="admin@quadra.com",
         password_hash=hash_password("admin1234"),
         role=UserRole.ADMIN,
     )

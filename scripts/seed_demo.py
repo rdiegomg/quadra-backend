@@ -6,7 +6,7 @@ Genera de forma determinista (semilla fija):
 - 100 empresas con nombres de empresas bolivianas reales o inventadas
   (Toyosa, Sofia, Entel, etc. — uso referencial, todos los datos son
   ficticios), NIT numerico y usuario COMPANY con email tipo
-  toyosa@quadra.demo (password demo1234)
+  toyosa@quadra.com (password demo1234)
 - ~300 obligaciones entre ellas (PENDING, OVERDUE, PARTIAL, PAID)
 - 6 ciclos de deuda intencionales y 4 cadenas abiertas, sobre
   obligaciones abiertas (detectables por el motor de grafos)
@@ -133,10 +133,10 @@ def create_companies(db, sectors) -> list[Company]:
         db.add(company)
         db.flush()
         slug = slugify(name)
-        email = f"{slug}@quadra.demo"
+        email = f"{slug}@quadra.com"
         suffix = 2
         while email in used_emails:
-            email = f"{slug}{suffix}@quadra.demo"
+            email = f"{slug}{suffix}@quadra.com"
             suffix += 1
         used_emails.add(email)
         db.add(
