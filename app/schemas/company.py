@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
@@ -78,6 +78,13 @@ class MyChainResponse(BaseModel):
     first_due_date: date | None
     edges: list[MyChainEdgeResponse]
     currency: str
+    # Propuesta multilateral persistida (None si no se pudo materializar)
+    proposal_id: int | None
+    proposal_status: str | None  # "PENDING" | "EXECUTED" | "REJECTED"
+    acceptances_done: int
+    acceptances_total: int
+    my_decision: str | None  # "ACCEPTED" | "REJECTED" | None (pendiente)
+    executed_at: datetime | None
 
 
 class MyNetworkNode(BaseModel):

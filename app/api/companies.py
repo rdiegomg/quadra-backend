@@ -16,19 +16,26 @@ from app.graph.analysis import (
 from app.graph.builder import build_debt_graph, edge_balance
 from app.graph.cycles import find_cycles
 from app.models.company import Company
-from app.models.enums import ObligationStatus
+from app.models.enums import (
+    AcceptanceStatus,
+    ObligationStatus,
+    ProposalStatus,
+)
 from app.models.obligation import Obligation
+from app.models.proposal import CompensationProposal
 from app.models.user import User
 from app.schemas.company import (
     CompanyResponse,
     CompanySummaryResponse,
     CompensationProposalResponse,
+    MyChainEdgeResponse,
     MyChainResponse,
     MyNetworkEdge,
     MyNetworkNode,
     MyNetworkResponse,
 )
 from app.schemas.obligation import ObligationResponse
+from app.services.proposals import acceptance_for, get_or_create_proposal
 
 # Costo financiero evitado ~2.5% (15% anual x ~60 dias de financiamiento).
 SAVINGS_RATE = Decimal("0.025")
@@ -184,6 +191,33 @@ def get_my_chains(
             (due_dates[oid] for oid in ids_in_chain if oid in due_dates),
             default=None,
         )
+
+        # Materializa la propuesta multilateral (snapshot real del tramo).
+        comp = chain["potential_compensation"]
+        edges_payload = [
+            {
+                "debtor_id": e["debtor_id"],
+                "creditor_id": e["creditor_id"],
+                "debtor_name": graph.nodes[e["debtor_id"]]["name"],
+                "creditor_name": graph.nodes[e["creditor_id"]]["name"],
+                "balance": str(edge_balance(data)),
+                "cancelled": str(comp),
+                "obligation_ids": data["obligation_ids"],
+            }
+            for e in chain["edges"]
+            for data in [graph.edges[e["debtor_id"], e["creditor_id"]]]
+        ]
+        proposal = get_or_create_proposal(
+            db,
+            chain["kind"],
+            chain["company_ids"],
+            edges_payload,
+            comp,
+            "BOB",
+            me,
+        )
+        my_acc = acceptance_for(proposal, me)
+
         responses.append(
             MyChainResponse(
                 kind=chain["kind"],
@@ -202,9 +236,130 @@ def get_my_chains(
                 first_due_date=first_due,
                 edges=chain["edges"],
                 currency="BOB",
+                proposal_id=proposal.id,
+                proposal_status=proposal.status.value,
+                acceptances_done=sum(
+                    1
+                    for a in proposal.acceptances
+                    if a.status == AcceptanceStatus.ACCEPTED
+                ),
+                acceptances_total=len(proposal.acceptances),
+                my_decision=(
+                    my_acc.status.value
+                    if my_acc
+                    and my_acc.status != AcceptanceStatus.PENDING
+                    else None
+                ),
+                executed_at=proposal.executed_at,
             )
         )
+
+    # Propuestas ya ejecutadas donde participo: aunque la cadena haya
+    # desaparecido del grafo al compensarse, la tarjeta queda visible
+    # como "Compensada" con acceso al acta.
+    covered = {r.proposal_id for r in responses}
+    executed = [
+        p
+        for p in db.scalars(
+            select(CompensationProposal).where(
+                CompensationProposal.status == ProposalStatus.EXECUTED
+            )
+        )
+        if me in (p.company_ids or []) and p.id not in covered
+    ]
+    for proposal in executed:
+        responses.append(_executed_chain_response(db, proposal, me))
+
+    db.commit()
     return responses
+
+
+def _executed_chain_response(
+    db: Session, proposal: CompensationProposal, me: int
+) -> MyChainResponse:
+    """Tarjeta de una cadena ya compensada, reconstruida desde el
+    snapshot de la propuesta (con las mismas reglas de privacidad)."""
+    ids = proposal.company_ids or []
+    # Contrapartes directas dentro de la propuesta: vecinos de `me`.
+    neighbors: set[int] = set()
+    for e in proposal.edge_payload:
+        if e["debtor_id"] == me:
+            neighbors.add(e["creditor_id"])
+        if e["creditor_id"] == me:
+            neighbors.add(e["debtor_id"])
+
+    companies = {
+        c.id: c
+        for c in db.scalars(
+            select(Company)
+            .options(joinedload(Company.sector))
+            .where(Company.id.in_(ids))
+        )
+    }
+
+    def label(cid: int) -> str:
+        if cid == me or cid in neighbors:
+            company = companies.get(cid)
+            return company.name if company else f"#{cid}"
+        sector = companies.get(cid).sector_name if cid in companies else None
+        return f"Empresa de {sector or 'rubro desconocido'}"
+
+    comp = Decimal(str(proposal.compensation))
+    if proposal.kind == "cycle":
+        position, cancelled, forgone = "member", comp, comp
+    elif me == ids[0]:
+        position, cancelled, forgone = "source", comp, Decimal("0.00")
+    elif me == ids[-1]:
+        position, cancelled, forgone = "sink", Decimal("0.00"), comp
+    else:
+        position, cancelled, forgone = "middle", comp, comp
+
+    edges = []
+    for e in proposal.edge_payload:
+        u, v = e["debtor_id"], e["creditor_id"]
+        visible = me in (u, v)
+        balance = Decimal(str(e["balance"]))
+        cancelled_edge = Decimal(str(e["cancelled"]))
+        edges.append(
+            MyChainEdgeResponse(
+                debtor_label=label(u),
+                creditor_label=label(v),
+                debtor_is_me=u == me,
+                creditor_is_me=v == me,
+                balance=balance if visible else None,
+                cancelled=cancelled_edge,
+                remainder=(balance - cancelled_edge) if visible else None,
+            )
+        )
+
+    named = [label(cid) for cid in ids if cid == me or cid in neighbors]
+    my_acc = acceptance_for(proposal, me)
+    return MyChainResponse(
+        kind=proposal.kind,
+        labels=[label(cid) for cid in ids],
+        named_participants=named,
+        anonymized_count=len(ids) - len(named),
+        length=len(ids),
+        my_position=position,
+        cancelled_amount=cancelled,
+        receivable_forgone=forgone,
+        potential_compensation=comp,
+        commission=(comp * COMMISSION_RATE).quantize(Decimal("0.01")),
+        status="ready" if proposal.kind == "cycle" else "compensable",
+        first_due_date=None,
+        edges=edges,
+        currency=proposal.currency,
+        proposal_id=proposal.id,
+        proposal_status=proposal.status.value,
+        acceptances_done=sum(
+            1
+            for a in proposal.acceptances
+            if a.status == AcceptanceStatus.ACCEPTED
+        ),
+        acceptances_total=len(proposal.acceptances),
+        my_decision=my_acc.status.value if my_acc else None,
+        executed_at=proposal.executed_at,
+    )
 
 
 @router.get("/me/network", response_model=MyNetworkResponse)

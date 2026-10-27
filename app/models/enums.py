@@ -26,3 +26,15 @@ class InstallmentStatus(str, enum.Enum):
     PENDING = "PENDING"
     PAID = "PAID"
     OVERDUE = "OVERDUE"
+
+
+class ProposalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    EXECUTED = "EXECUTED"
+    REJECTED = "REJECTED"
+
+
+class AcceptanceStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
