@@ -37,6 +37,23 @@ class ActaTranche(BaseModel):
     residual: Decimal
 
 
+class AdminProposalResponse(BaseModel):
+    """Fila del historial de propuestas para el administrador."""
+
+    id: int
+    kind: str
+    status: str
+    companies: list[str]
+    length: int
+    compensation: Decimal
+    currency: str
+    acta_number: str | None
+    acceptances_done: int
+    acceptances_total: int
+    created_at: datetime | None
+    executed_at: datetime | None
+
+
 class ActaResponse(BaseModel):
     """Acta de compensacion multilateral (documento legal emitido
     cuando todos los participantes aceptaron)."""

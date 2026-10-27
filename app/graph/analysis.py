@@ -15,8 +15,13 @@ from sqlalchemy.orm import Session
 from app.graph.builder import edge_balance
 from app.graph.cycles import find_cycles
 from app.models.company import Company
-from app.models.enums import ObligationStatus
+from app.models.enums import (
+    AcceptanceStatus,
+    ObligationStatus,
+    ProposalStatus,
+)
 from app.models.obligation import Obligation
+from app.models.proposal import CompensationProposal, ProposalAcceptance
 
 MAX_CHAIN_LENGTH = 8
 MAX_CHAINS = 25
@@ -330,6 +335,45 @@ def network_statistics(graph: nx.DiGraph, db: Session) -> dict:
         (compensable / total_volume) if total_volume > 0 else Decimal("0")
     )
 
+    # Metricas de gestion del documento (§16).
+    proposal_counts = dict(
+        db.execute(
+            select(CompensationProposal.status, func.count())
+            .group_by(CompensationProposal.status)
+        ).all()
+    )
+    executed = proposal_counts.get(ProposalStatus.EXECUTED, 0)
+    rejected = proposal_counts.get(ProposalStatus.REJECTED, 0)
+    pending = proposal_counts.get(ProposalStatus.PENDING, 0)
+    acceptance_rate = (
+        Decimal(executed) / Decimal(executed + rejected)
+        if (executed + rejected) > 0
+        else None
+    )
+    total_compensated = db.scalar(
+        select(func.coalesce(func.sum(CompensationProposal.compensation), 0)).where(
+            CompensationProposal.status == ProposalStatus.EXECUTED
+        )
+    )
+    decided = db.scalar(
+        select(func.count(ProposalAcceptance.id)).where(
+            ProposalAcceptance.status.in_(
+                (AcceptanceStatus.ACCEPTED, AcceptanceStatus.REJECTED)
+            )
+        )
+    )
+    accepted_decisions = db.scalar(
+        select(func.count(ProposalAcceptance.id)).where(
+            ProposalAcceptance.status == AcceptanceStatus.ACCEPTED
+        )
+    )
+    decision_rate = (
+        Decimal(accepted_decisions) / Decimal(decided)
+        if decided
+        else None
+    )
+    n_nodes = graph.number_of_nodes()
+
     return {
         "companies_in_network": graph.number_of_nodes(),
         "companies_total": db.scalar(select(func.count(Company.id))),
@@ -345,6 +389,21 @@ def network_statistics(graph: nx.DiGraph, db: Session) -> dict:
         ),
         "cycles_in_estimate": n_cycles,
         "chains_in_estimate": n_chains,
+        # §16 gestion
+        "avg_connections_per_company": (
+            Decimal(graph.number_of_edges()) / Decimal(n_nodes)
+            if n_nodes
+            else Decimal("0")
+        ),
+        "proposals_pending": pending,
+        "proposals_executed": executed,
+        "proposals_rejected": rejected,
+        "acceptance_rate": acceptance_rate,
+        "decision_rate": decision_rate,
+        "total_compensated": total_compensated,
+        "realized_commission": (
+            Decimal(str(total_compensated)) * COMMISSION_RATE
+        ).quantize(Decimal("0.01")),
         "top_debtors": top(debt_by_node),
         "top_creditors": top(credit_by_node),
         "companies_by_sector": dict(companies_by_sector),

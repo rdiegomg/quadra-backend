@@ -6,7 +6,12 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.test_obligations import auth, create_obligation, register_company
+from tests.test_obligations import (
+    admin_token,
+    auth,
+    create_obligation,
+    register_company,
+)
 
 
 def _triangle(client: TestClient, sector) -> tuple[str, str, str]:
@@ -185,4 +190,80 @@ def test_executed_proposal_is_immutable_and_full_cancel_marks_paid(
             headers=auth(token_a),
         ).status_code
         == 409
+    )
+
+
+def test_opportunities_show_missing_link(
+    client: TestClient, sector
+) -> None:
+    """Cadena abierta A -> B -> C: las puntas ven el eslabon faltante
+    (C le deberia a A) que cerraria el circulo."""
+    token_a = register_company(client, sector, "1111", "a@x.bo", "Empresa A")
+    token_b = register_company(client, sector, "2222", "b@x.bo", "Empresa B")
+    token_c = register_company(client, sector, "3333", "c@x.bo", "Empresa C")
+
+    create_obligation(client, token_a, "2222", amount="30000.00")  # A -> B
+    create_obligation(client, token_b, "3333", amount="20000.00")  # B -> C
+
+    # C (ultima punta): si le debiera a A, el circulo se cierra
+    opps_c = client.get(
+        "/api/companies/me/opportunities", headers=auth(token_c)
+    ).json()
+    assert len(opps_c) == 1
+    assert opps_c[0]["direction"] == "payable"
+    assert opps_c[0]["counterparty_name"] == "Empresa A"
+    assert opps_c[0]["potential_compensation"] == "20000.00"
+
+    # A (primera punta): si C le debiera, tambien cierra
+    opps_a = client.get(
+        "/api/companies/me/opportunities", headers=auth(token_a)
+    ).json()
+    assert len(opps_a) == 1
+    assert opps_a[0]["direction"] == "receivable"
+    assert opps_a[0]["counterparty_name"] == "Empresa C"
+
+    # B esta en el medio: no le corresponde ningun eslabon
+    assert (
+        client.get(
+            "/api/companies/me/opportunities", headers=auth(token_b)
+        ).json()
+        == []
+    )
+
+
+def test_admin_proposal_history_and_stats(
+    client: TestClient, sector, admin_user
+) -> None:
+    token_a, _, _ = _triangle(client, sector)
+    cycle = next(c for c in _chains(client, token_a) if c["kind"] == "cycle")
+    client.post(
+        f"/api/proposals/{cycle['proposal_id']}/respond",
+        json={"action": "accept"},
+        headers=auth(token_a),
+    )
+
+    admin = admin_token(client)
+    history = client.get(
+        "/api/admin/proposals", headers=auth(admin)
+    ).json()
+    executed = [p for p in history if p["status"] == "EXECUTED"]
+    assert len(executed) == 1
+    assert executed[0]["acta_number"] == f"AC-{cycle['proposal_id']:05d}"
+    assert executed[0]["compensation"] == "20000.00"
+    assert executed[0]["acceptances_done"] == 3
+
+    stats = client.get(
+        "/api/admin/network/statistics", headers=auth(admin)
+    ).json()
+    assert stats["proposals_executed"] == 1
+    assert stats["total_compensated"] == "20000.00"
+    assert stats["realized_commission"] == "300.00"
+    assert stats["acceptance_rate"] == "1"
+    # El eslabon B->C quedo en cero y salio del grafo: 2 aristas / 3 nodos
+    assert abs(float(stats["avg_connections_per_company"]) - 2 / 3) < 0.01
+
+    # empresas no ven el historial admin
+    assert (
+        client.get("/api/admin/proposals", headers=auth(token_a)).status_code
+        == 403
     )

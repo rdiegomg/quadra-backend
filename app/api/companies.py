@@ -33,7 +33,9 @@ from app.schemas.company import (
     MyNetworkEdge,
     MyNetworkNode,
     MyNetworkResponse,
+    OpportunityResponse,
 )
+from app.schemas.proposal import AdminProposalResponse
 from app.schemas.obligation import ObligationResponse
 from app.services.proposals import acceptance_for, get_or_create_proposal
 
@@ -232,6 +234,9 @@ def get_my_chains(
                 commission=(
                     chain["potential_compensation"] * COMMISSION_RATE
                 ).quantize(Decimal("0.01")),
+                est_savings=(
+                    chain["cancelled_amount"] * SAVINGS_RATE
+                ).quantize(Decimal("0.01")),
                 status=chain["status"],
                 first_due_date=first_due,
                 edges=chain["edges"],
@@ -345,6 +350,7 @@ def _executed_chain_response(
         receivable_forgone=forgone,
         potential_compensation=comp,
         commission=(comp * COMMISSION_RATE).quantize(Decimal("0.01")),
+        est_savings=(cancelled * SAVINGS_RATE).quantize(Decimal("0.01")),
         status="ready" if proposal.kind == "cycle" else "compensable",
         first_due_date=None,
         edges=edges,
@@ -359,6 +365,56 @@ def _executed_chain_response(
         acceptances_total=len(proposal.acceptances),
         my_decision=my_acc.status.value if my_acc else None,
         executed_at=proposal.executed_at,
+    )
+
+
+@router.get("/me/opportunities", response_model=list[OpportunityResponse])
+def get_my_opportunities(
+    current_user: User = Depends(require_company_user),
+    db: Session = Depends(get_db),
+) -> list[OpportunityResponse]:
+    """Eslabones faltantes que cerrarian cadenas abiertas como ciclos.
+
+    En una cadena A -> B -> C -> D falta la arista D -> A: si D le debe
+    a A (o A le cobra a D), el circulo se cierra. Las puntas ven a la
+    empresa correspondiente porque la deuda, si existe, ya la conocen.
+    """
+    graph = build_debt_graph(db)
+    me = current_user.company_id
+
+    opportunities: dict[tuple[str, int], OpportunityResponse] = {}
+    for chain in find_company_chains(graph, me):
+        if chain["kind"] != "chain":
+            continue
+        path = chain["company_ids"]
+        if me == path[-1]:
+            # Soy la ultima punta: me falta deberle a la primera.
+            counterparty_id, direction = path[0], "payable"
+        elif me == path[0]:
+            # Soy la primera punta: me falta que la ultima me deba.
+            counterparty_id, direction = path[-1], "receivable"
+        else:
+            continue
+
+        node = graph.nodes[counterparty_id]
+        key = (direction, counterparty_id)
+        comp = chain["potential_compensation"]
+        if key in opportunities and opportunities[key].potential_compensation >= comp:
+            continue
+        opportunities[key] = OpportunityResponse(
+            direction=direction,
+            counterparty_id=counterparty_id,
+            counterparty_name=node["name"],
+            counterparty_nit=node.get("nit", ""),
+            counterparty_sector=node.get("sector"),
+            chain_length=len(path),
+            potential_compensation=comp,
+            currency="BOB",
+        )
+    return sorted(
+        opportunities.values(),
+        key=lambda o: o.potential_compensation,
+        reverse=True,
     )
 
 
@@ -456,3 +512,53 @@ def list_obligations_admin(
         else Obligation.status.in_(OPEN_STATUSES)
     )
     return list(db.scalars(stmt))
+
+
+@admin_router.get("/proposals", response_model=list[AdminProposalResponse])
+def list_proposals_admin(
+    _: User = Depends(require_admin), db: Session = Depends(get_db)
+) -> list[AdminProposalResponse]:
+    """Historial de propuestas/ciclos ejecutados (metrica §16)."""
+    proposals = list(
+        db.scalars(
+            select(CompensationProposal).order_by(
+                CompensationProposal.created_at.desc()
+            )
+        )
+    )
+    company_names = {
+        c.id: c.name
+        for c in db.scalars(
+            select(Company).where(
+                Company.id.in_(
+                    {cid for p in proposals for cid in (p.company_ids or [])}
+                    or [0]
+                )
+            )
+        )
+    }
+    return [
+        AdminProposalResponse(
+            id=p.id,
+            kind=p.kind,
+            status=p.status.value,
+            companies=[
+                company_names.get(cid, f"#{cid}") for cid in (p.company_ids or [])
+            ],
+            length=len(p.company_ids or []),
+            compensation=p.compensation,
+            currency=p.currency,
+            acta_number=(
+                f"AC-{p.acta_number:05d}" if p.acta_number is not None else None
+            ),
+            acceptances_done=sum(
+                1
+                for a in p.acceptances
+                if a.status == AcceptanceStatus.ACCEPTED
+            ),
+            acceptances_total=len(p.acceptances),
+            created_at=p.created_at,
+            executed_at=p.executed_at,
+        )
+        for p in proposals
+    ]

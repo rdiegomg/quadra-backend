@@ -74,6 +74,7 @@ class MyChainResponse(BaseModel):
     receivable_forgone: Decimal
     potential_compensation: Decimal
     commission: Decimal
+    est_savings: Decimal
     status: str  # "ready" | "compensable"
     first_due_date: date | None
     edges: list[MyChainEdgeResponse]
@@ -85,6 +86,24 @@ class MyChainResponse(BaseModel):
     acceptances_total: int
     my_decision: str | None  # "ACCEPTED" | "REJECTED" | None (pendiente)
     executed_at: datetime | None
+
+
+class OpportunityResponse(BaseModel):
+    """Eslabon faltante que cerraria una cadena abierta como ciclo.
+
+    La empresa ve a quien corresponde la deuda que faltaria: es SU
+    propia contraparte potencial (si la deuda existe en la realidad,
+    ya la conoce). Al registrarla, el circulo se cierra solo.
+    """
+
+    direction: str  # "payable" (yo le debo) | "receivable" (me debe)
+    counterparty_id: int
+    counterparty_name: str
+    counterparty_nit: str
+    counterparty_sector: str | None
+    chain_length: int
+    potential_compensation: Decimal
+    currency: str
 
 
 class MyNetworkNode(BaseModel):

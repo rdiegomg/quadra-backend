@@ -79,6 +79,15 @@ class NetworkStatisticsResponse(BaseModel):
     estimated_commission: Decimal
     cycles_in_estimate: int
     chains_in_estimate: int
+    # Metricas de gestion del documento (§16)
+    avg_connections_per_company: Decimal
+    proposals_pending: int
+    proposals_executed: int
+    proposals_rejected: int
+    acceptance_rate: Decimal | None
+    decision_rate: Decimal | None
+    total_compensated: Decimal
+    realized_commission: Decimal
     top_debtors: list[TopCompanyResponse]
     top_creditors: list[TopCompanyResponse]
     companies_by_sector: dict[str, int]
