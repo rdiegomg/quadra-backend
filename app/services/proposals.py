@@ -45,7 +45,9 @@ def get_or_create_proposal(
     compensation: Decimal,
     currency: str,
     viewer_company_id: int,
-) -> CompensationProposal:
+) -> CompensationProposal | None:
+    """Materializa la propuesta si no existe (None si el tramo mezcla
+    monedas: no se puede compensar entre divisas distintas)."""
     """Materializa la propuesta si no existe.
 
     `edges` = [{debtor_id, creditor_id, debtor_name, creditor_name,
@@ -60,6 +62,9 @@ def get_or_create_proposal(
     )
     if proposal is not None:
         return proposal
+    currencies = {str(e.get("currency") or currency) for e in edges}
+    if len(currencies) > 1:
+        return None
 
     now = datetime.now(timezone.utc)
     proposal = CompensationProposal(
@@ -132,8 +137,34 @@ def respond(
     if all(
         a.status == AcceptanceStatus.ACCEPTED for a in proposal.acceptances
     ):
+        if not _edges_vigentes(db, proposal):
+            # Los saldos del tramo cambiaron desde que se propuso:
+            # la propuesta caduca en vez de ejecutarse a medias.
+            proposal.status = ProposalStatus.STALE
+            raise ValueError(
+                "La propuesta caduco: los saldos del tramo ya no alcanzan"
+            )
         _execute(db, proposal)
     return proposal
+
+
+def _edges_vigentes(db: Session, proposal: CompensationProposal) -> bool:
+    """Verifica que cada eslabon del snapshot siga teniendo saldo
+    abierto suficiente para cubrir su parte de la compensacion."""
+    for edge in proposal.edge_payload:
+        available = Decimal("0")
+        for oid in edge["obligation_ids"]:
+            obligation = db.get(Obligation, oid)
+            if obligation is None or obligation.status not in (
+                ObligationStatus.PENDING,
+                ObligationStatus.PARTIAL,
+                ObligationStatus.OVERDUE,
+            ):
+                continue
+            available += Decimal(str(obligation.balance))
+        if available < Decimal(str(edge["cancelled"])):
+            return False
+    return True
 
 
 def _execute(db: Session, proposal: CompensationProposal) -> None:
@@ -168,6 +199,12 @@ def _execute(db: Session, proposal: CompensationProposal) -> None:
         for obligation in obligations:
             if remaining <= 0:
                 break
+            if obligation.status not in (
+                ObligationStatus.PENDING,
+                ObligationStatus.PARTIAL,
+                ObligationStatus.OVERDUE,
+            ):
+                continue
             cut = min(Decimal(str(obligation.balance)), remaining)
             previous = obligation.status
             obligation.balance = Decimal(str(obligation.balance)) - cut

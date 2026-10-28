@@ -205,6 +205,7 @@ def get_my_chains(
                 "balance": str(edge_balance(data)),
                 "cancelled": str(comp),
                 "obligation_ids": data["obligation_ids"],
+                "currency": data.get("currency", "BOB"),
             }
             for e in chain["edges"]
             for data in [graph.edges[e["debtor_id"], e["creditor_id"]]]
@@ -218,7 +219,7 @@ def get_my_chains(
             "BOB",
             me,
         )
-        my_acc = acceptance_for(proposal, me)
+        my_acc = acceptance_for(proposal, me) if proposal else None
 
         responses.append(
             MyChainResponse(
@@ -241,23 +242,38 @@ def get_my_chains(
                 first_due_date=first_due,
                 edges=chain["edges"],
                 currency="BOB",
-                proposal_id=proposal.id,
-                proposal_status=proposal.status.value,
-                acceptances_done=sum(
-                    1
-                    for a in proposal.acceptances
-                    if a.status == AcceptanceStatus.ACCEPTED
+                proposal_id=proposal.id if proposal else None,
+                proposal_status=proposal.status.value if proposal else None,
+                acceptances_done=(
+                    sum(
+                        1
+                        for a in proposal.acceptances
+                        if a.status == AcceptanceStatus.ACCEPTED
+                    )
+                    if proposal
+                    else 0
                 ),
-                acceptances_total=len(proposal.acceptances),
+                acceptances_total=len(proposal.acceptances) if proposal else 0,
                 my_decision=(
                     my_acc.status.value
                     if my_acc
                     and my_acc.status != AcceptanceStatus.PENDING
                     else None
                 ),
-                executed_at=proposal.executed_at,
+                executed_at=proposal.executed_at if proposal else None,
             )
         )
+
+    # Propuestas mias aun PENDING cuya firma ya no aparece en el grafo
+    # actual: el tramo cambio o desaparecio -> caducan.
+    live_ids = {r.proposal_id for r in responses}
+    for p in db.scalars(
+        select(CompensationProposal).where(
+            CompensationProposal.status == ProposalStatus.PENDING
+        )
+    ):
+        if me in (p.company_ids or []) and p.id not in live_ids:
+            p.status = ProposalStatus.STALE
 
     # Propuestas ya ejecutadas donde participo: aunque la cadena haya
     # desaparecido del grafo al compensarse, la tarjeta queda visible

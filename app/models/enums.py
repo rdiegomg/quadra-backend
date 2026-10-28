@@ -32,6 +32,7 @@ class ProposalStatus(str, enum.Enum):
     PENDING = "PENDING"
     EXECUTED = "EXECUTED"
     REJECTED = "REJECTED"
+    STALE = "STALE"
 
 
 class AcceptanceStatus(str, enum.Enum):

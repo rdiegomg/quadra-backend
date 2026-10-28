@@ -86,6 +86,8 @@ def respond_to_proposal(
     try:
         svc.respond(db, proposal, current_user.company_id, payload.action)
     except ValueError as exc:
+        # Si caduco al validar saldos, el estado STALE queda persistido.
+        db.commit()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
     db.commit()
     db.refresh(proposal)

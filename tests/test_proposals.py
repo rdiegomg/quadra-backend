@@ -193,6 +193,42 @@ def test_executed_proposal_is_immutable_and_full_cancel_marks_paid(
     )
 
 
+def test_proposal_goes_stale_when_graph_changes(
+    client: TestClient, sector, admin_user
+) -> None:
+    """Si el tramo cambia antes de ejecutarse, la propuesta caduca
+    en vez de ejecutarse sobre saldos que ya no existen."""
+    token_a, token_b, _ = _triangle(client, sector)
+    cycle = next(c for c in _chains(client, token_a) if c["kind"] == "cycle")
+    pid = cycle["proposal_id"]
+
+    # B paga su deuda completa: el eslabon B->C desaparece del grafo
+    obs_b = client.get(
+        "/api/obligations/payable", headers=auth(token_b)
+    ).json()
+    client.patch(
+        f"/api/obligations/{obs_b[0]['id']}/status",
+        json={"status": "PAID"},
+        headers=auth(token_b),
+    )
+
+    # Responder sobre una propuesta caducada: 409 y queda STALE
+    r = client.post(
+        f"/api/proposals/{pid}/respond",
+        json={"action": "accept"},
+        headers=auth(token_a),
+    )
+    assert r.status_code == 409
+    state = client.get(f"/api/proposals/{pid}", headers=auth(token_a)).json()
+    assert state["status"] == "STALE"
+
+    # El historial del admin tambien la muestra caducada
+    history = client.get(
+        "/api/admin/proposals", headers=auth(admin_token(client))
+    ).json()
+    assert next(p for p in history if p["id"] == pid)["status"] == "STALE"
+
+
 def test_opportunities_show_missing_link(
     client: TestClient, sector
 ) -> None:
