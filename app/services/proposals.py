@@ -4,9 +4,9 @@ Flujo (doc §3.2): QUADRA detecta una cadena/ciclo y materializa una
 propuesta; cada participante acepta o rechaza; solo cuando TODOS aceptan
 se ejecuta la compensacion sobre los saldos reales y se emite el acta.
 
-Las aceptaciones de las empresas ficticias del seed se simulan al crear
-la propuesta (todas aceptadas salvo la empresa que la descubre, que queda
-PENDING esperando su decision real).
+En modo demo (DEMO_AUTO_ACCEPT=true) las demas empresas quedan ACCEPTED
+al crear la propuesta, simulando sus respuestas; con el flag apagado
+todas quedan PENDING y cada empresa decide con su propia sesion.
 """
 
 import hashlib
@@ -16,6 +16,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.company import Company
 from app.models.enums import AcceptanceStatus, ObligationStatus, ProposalStatus
 from app.models.obligation import Obligation, ObligationEvent
@@ -78,8 +79,9 @@ def get_or_create_proposal(
     )
     db.add(proposal)
     db.flush()
+    auto_accept = get_settings().demo_auto_accept
     for cid in company_ids:
-        decided = cid != viewer_company_id
+        decided = auto_accept and cid != viewer_company_id
         db.add(
             ProposalAcceptance(
                 proposal_id=proposal.id,

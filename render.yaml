@@ -1,0 +1,25 @@
+# QUADRA backend — despliegue en Render (plan free, Docker).
+# La base Postgres vive afuera (Supabase/Neon): DATABASE_URL se setea a mano.
+services:
+  - type: web
+    name: quadra-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    branch: produccion
+    envVars:
+      - key: DATABASE_URL
+        sync: false # postgresql+psycopg://... (URI de Supabase con driver psycopg)
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false # URL del frontend en Vercel, ej: https://quadra.vercel.app
+      - key: ENVIRONMENT
+        value: production
+      - key: DEMO_AUTO_ACCEPT
+        value: "false" # cada empresa responde con su propia sesion
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

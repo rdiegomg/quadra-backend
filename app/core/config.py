@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:4200"
     environment: str = "development"
     upload_dir: str = "uploads"
+    # Demo: al materializar una propuesta, las demas empresas quedan
+    # ACCEPTED automaticamente (solo para datos ficticios).
+    demo_auto_accept: bool = True
+    # Credenciales del usuario admin creado por scripts.seed_base.
+    admin_email: str = "admin@quadra.com"
+    admin_password: str = "admin1234"
 
     @property
     def cors_origin_list(self) -> list[str]:

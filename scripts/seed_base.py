@@ -5,6 +5,8 @@ El script completo de datos ficticios (empresas, obligaciones, ciclos)
 es scripts/seed_demo.py (fase 3).
 """
 
+import os
+
 from sqlalchemy import select
 
 from app.core.database import SessionLocal
@@ -21,8 +23,8 @@ SECTORS = [
     ("Alimentos", "Produccion y comercializacion de alimentos"),
 ]
 
-ADMIN_EMAIL = "admin@quadra.com"
-ADMIN_PASSWORD = "admin1234"  # credencial de demostracion
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@quadra.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 
 
 def run() -> None:
