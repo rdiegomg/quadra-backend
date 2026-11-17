@@ -21,6 +21,18 @@ SECTORS = [
     ("Comercio y distribucion", "Comercializacion y distribucion de productos"),
     ("Automotriz y repuestos", "Venta de vehiculos, repuestos y talleres"),
     ("Alimentos", "Produccion y comercializacion de alimentos"),
+    ("Ferreterias y materiales", "Ferreterias, importadoras de filtros, llantas y materiales de construccion"),
+    ("Importadoras y exportadoras", "Comercio exterior, importacion y exportacion de bienes"),
+    ("Agroindustria", "Produccion agropecuaria, agroprocesamiento y granos"),
+    ("Manufactura e industria", "Produccion industrial, fabricacion y ensamble"),
+    ("Tecnologia y software", "Desarrollo de software, TI y servicios digitales"),
+    ("Fintech y servicios financieros", "Pagos, creditos, seguros y tecnologia financiera"),
+    ("Servicios profesionales", "Consultoria, contabilidad, legal y servicios a empresas"),
+    ("Salud y farmaceutica", "Clinicas, farmacias, laboratorios y servicios de salud"),
+    ("Turismo y gastronomia", "Hoteles, restaurantes, catering y servicios turisticos"),
+    ("Energia y mineria", "Energia, gas, mineria y recursos naturales"),
+    ("Educacion", "Institutos, universidades y servicios educativos"),
+    ("Otro", "Otros sectores no listados"),
 ]
 
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@quadra.com")
